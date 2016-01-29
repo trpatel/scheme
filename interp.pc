@@ -1,0 +1,182 @@
+;;;Tej Patel
+
+(load "parenthec.ss")
+(load "pmatch.scm")
+
+(define-registers *expr *env *k *v)
+(define-program-counter *pc)
+
+(define-union exp
+  (const n)
+  (var v)
+  (if-k conseq alt env k)
+  (mult rand1 rand2)
+  (sub1 rand)
+  (zero rand)
+  (capture body)
+  (return vexp kexp)
+  (let vexp body)
+  (lambda body)
+  (app rator rand)
+  (empty-k jump))
+ 
+(define-label value-of-cps ;; *expr *env *k
+  (begin
+    (set! *k *k)
+    (set! *n *n)
+    (set! *pc app-k))
+  (begin
+    (set! *k *k)
+    (set! *v (apply-env *env *v))
+    (set! *pc app-k))
+  (begin
+    (set! *k (kon_if-k conseq alt *env *k))
+    (set! *env *env)
+    (set! *expr test)
+    (set! *pc value-of-cps))
+  (begin
+    (set! *k *k)
+    (set! *v (* (value-of cps rand1 *env *k) (value-of-cps rand2 *env *k)))
+    (set! *pc app-k))
+  (begin
+    (set! *k *k)
+    (set! *v (- (value-of-cps rand *env *k) 1))
+    (set! *pc app-k))
+  (begin
+    (set! *k *k)
+    (set! *env *env)
+    (set! *expr (value-of-cps rand *env *k))
+    (set! *pc zero))
+  (begin
+    (set! *k *k)
+    (set! *env (envr_extend *k *env))
+    (set! *expr body)
+    (set! *pc value-of-cps))
+  (begin
+    (set! *k *k)
+    (set! *env *env)
+    (set! *expr kexp)
+    ((set! *pc value-of-cps)
+     (set! *expr vexp)
+     (set! *pc value-of-cps)))
+  (begin
+    (set! *k *k)
+    (set! *env (envr_extend (value-of-cps body *env *k)))
+    (set! *expr body)
+    (set! *pc value-of-cps))
+  (begin
+    (set! *env *env)
+    (set! *expr body)
+    (set! *pc clos_closure))
+  (begin
+    (set! *k *k)
+    (set! *env *env)
+    (set! c (value-of-cps rator *env *k))
+    (set! a (value-of-cps rand *env *k))
+    (set! *pc apply-closure)))
+
+(define-label app-k ;; *k *v
+  (union-case *k exp
+    ((empty-k jump) (dismount-trampoline jump))
+    ((if-k conseq alt env k)
+     (begin
+       (set! *k v)
+       (set! *pc if-k)))))
+
+(define-union envr
+  (empty)
+  (extend arg env))
+ 
+(define-label apply-env-cps*env *num *k
+  [(empty-k jump) (errorf 'env "unbound variable")]
+  [(extend arg env)
+   (if (zero? num)
+       (k arg)
+       (k (apply-env env (sub1 num))))])
+ 
+(define-union clos
+  (closure code env))
+ 
+(define-label apply-closure-cps ;;*c *a *k
+  [(closure code env)
+   (value-of-cps code (envr_extend *a env) *k)])
+ 
+;;;Basic test...should be 5.
+(define-label main
+  (begin
+    (set! *k (exp_empty-k))
+    (set! *env (envr_empty))
+    (set! *expr (exp_app
+                 (exp_app
+                  (exp_lambda (exp_lambda (exp_var 1)))
+                  (exp_const 5))
+                 (exp_const 6)))
+    (set! *pc value-of-pc)
+    (mount-trampoline exp_empty-k *k *pc)
+    (pretty-print *v)))
+ 
+;;;Factorial of 5...should be 120.
+(define-label main
+  (begin
+    (set! *k (kon_empty-k))
+    (set! *env (envr_empty))
+    (set! *expr (exp_app
+                 (exp_lambda
+                  (exp_app
+                   (exp_app (exp_var 0) (exp_var 0))
+                   (exp_const 5)))
+                 (exp_lambda
+                  (exp_lambda
+                   (exp_if (exp_zero (exp_var 0))
+                           (exp_const 1)
+                           (exp_mult (exp_var 0)
+                                     (exp_app
+                                      (exp_app (exp_var 1) (exp_var 1))
+                                      (exp_sub1 (exp_var 0)))))))))
+    (set! *pc value-of-pc)
+    (mount-trampoline exp_empty-k *k *pc)
+    (pretty-print *v)))
+
+ 
+;;;Test of capture and return...should evaluate to 24.
+(define-label main
+  (begin
+    (set! *k (kon_empty-k))
+    (set! *env (envr_empty))
+    (set! *expr (exp_mult (exp_const 2)
+                          (exp_capture
+                           (exp_mult (exp_const 5)
+                                     (exp_return (exp_mult (exp_const 2) (exp_const 6))
+                                                 (exp_var 0))))))
+    (set! *pc value-of-pc)
+    (mount-trampoline exp_empty-k *k *pc)
+    (pretty-print *v)))
+
+
+;; (let ([fact (lambda (f)                                                      
+;;               (lambda (n)                                                    
+;;                 (if (zero? n)                                                
+;;                     1                                                        
+;;                     (* n ((f f) (sub1 n))))))])                              
+;;   ((fact fact) 5))
+
+(define-label main
+  (begin
+    (set! *k (kon_empty-k))
+    (set! *env (envr_empty))
+    (set! *expr (exp_let
+                 (exp_lambda
+                  (exp_lambda
+                   (exp_if
+                    (exp_zero (exp_var 0))
+                    (exp_const 1)
+                    (exp_mult
+                     (exp_var 0)
+                     (exp_app
+                      (exp_app (exp_var 1) (exp_var 1))
+                      (exp_sub1 (exp_var 0)))))))
+                 (exp_app (exp_app (exp_var 0) (exp_var 0)) (exp_const 5))))
+    (set! *pc value-of-pc)
+    (mount-trampoline exp_empty-k *k *pc)
+    (pretty-print *v)))
+ 
